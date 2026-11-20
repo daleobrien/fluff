@@ -1,106 +1,52 @@
-# fluff
+<h1 align="center">fluff</h1>
 
-Write tiny `gzip` and `brotli` files that expand to one repeated byte — one
-byte puffed up into megabytes of nothing. Useful for exercising decompression
-limits, streaming buffers, or just seeing how far a compressor will go on the
-most boring input possible.
+<p align="center">Tiny gzip and brotli files that expand to one repeated byte, written by hand in Rust.</p>
 
-The output is streamed, so generating a multi-gigabyte expansion never uses
-more than a few kilobytes of memory.
+<p align="center">
+  <a href="#quick-start"><b>Quick start</b></a> &nbsp;·&nbsp;
+  <a href="#documents">Documents</a> &nbsp;·&nbsp;
+  <a href="#how-it-works">How it works</a>
+</p>
 
-## Build
+<p align="center">
+  <img src="docs/cover.png" alt="The 13 bytes of a brotli file, surrounded by the megabyte of the letter a it expands to" width="100%">
+</p>
 
-```sh
-cargo build --release
+fluff writes a `.gz` and a `.br` file that decompress to megabytes, or
+terabytes, of a single byte: 1 MiB of `a` is about 1 KB as gzip and 13 bytes
+as brotli. Use them to test decompression limits and streaming buffers, or to
+see how far each format can go on the most boring input there is. The output
+is streamed, so even a terabyte uses only a few kilobytes of memory.
+
+## Quick start
+
+```bash
+make build                          # build the fluff command
+make files                          # out/repeat.gz and out/repeat.br: 1 MiB of 'a'
+make files C=0 SIZE=1g NAME=zero    # 1 GiB of '0' in out/zero.gz and out/zero.br
+make files FORMAT=br                # only the brotli file
+make verify                         # decompress them and count the bytes
+make install                        # put fluff on your PATH
+make                                # list every task
 ```
 
-Command-line options are handled by [clap](https://docs.rs/clap).
+See [Using fluff](docs/usage.md) for every option.
 
-## Usage
+## Documents
 
-```sh
-fluff [OPTIONS]
-```
-
-| Option | Description | Default |
-| --- | --- | --- |
-| `-c, --char <CHAR>` | ASCII byte to repeat | `a` |
-| `-s, --size <SIZE>` | decompressed size; suffixes `k`/`m`/`g`/`t` = KiB/MiB/GiB/TiB | `1m` |
-| `-o, --out <PREFIX>` | output prefix; writes `<PREFIX>.gz` and/or `<PREFIX>.br` | `repeat` |
-| `-f, --format <FORMAT>` | which file(s) to write: `both`, `gz`, or `br` | `both` |
-| `-h, --help` | show help | |
-| `-V, --version` | show version | |
-
-### Examples
-
-```sh
-# Default: 1 MiB of 'a' -> repeat.gz (~1 KB) and repeat.br (far smaller)
-fluff
-
-# 1 GiB of '0', written as zero.gz / zero.br
-fluff --char 0 --size 1g --out zero
-
-# Only the brotli file (skip the .gz)
-fluff --format br --out zero --char 0 --size 1g
-```
-
-### Checking the result
-
-```sh
-ls -l repeat.gz repeat.br
-gunzip -c repeat.gz | wc -c      # -> decompressed byte count
-brotli -d -c repeat.br | wc -c   # needs the `brotli` CLI
-```
+| Document | What's in it |
+| -------- | ------------ |
+| [Using fluff](docs/usage.md) | The options, examples and how to check the files |
+| [How it works](docs/how-it-works.md) | The hand-written gzip and brotli streams, the source layout, and why the ratios are what they are |
 
 ## How it works
 
-Because the input is a single byte repeated, there is nothing to search for —
-the compressed form is written directly:
+There is nothing to search for in one repeated byte, so no compression library
+is used: `src/gzip/` writes a literal and then runs of 258-byte copies with
+one-bit Huffman codes, the most DEFLATE allows, and `src/brotli/` writes
+meta-blocks of one literal and a single copy of up to 16 MiB whose codes cost
+zero bits. [How it works](docs/how-it-works.md) has the rest.
 
-- **gzip** is hand-written (no compression library). The first byte is emitted
-  as a literal, followed by a run of length-258, distance-1 back-references. A
-  custom dynamic-Huffman block gives those length and distance symbols one-bit
-  codes, which reaches DEFLATE's theoretical ceiling. The CRC-32 of the (huge)
-  output is computed by CRC *combination* in O(log n), so even a terabyte is
-  instant to checksum.
-- **brotli** is hand-written too (no compression library). Each meta-block
-  emits the byte as a single literal followed by one copy of up to ~16 MiB at
-  distance 1. All three prefix codes (literal, insert-and-copy, and distance)
-  are *simple* one-symbol codes, so their symbols cost zero bits — a whole
-  meta-block is a handful of header bits plus the copy length's extra bits.
-  Distance 1 uses a direct distance code, so each meta-block is self-contained;
-  outputs past brotli's 16 MiB meta-block limit are split into several
-  identical meta-blocks and stream in flat memory.
+---
 
-### Source layout
-
-```
-src/
-  main.rs            entry point and the run/report glue
-  cli.rs             clap argument definitions and value parsers
-  report.rs          size/ratio formatting
-  brotli/
-    mod.rs           assembles the brotli stream
-    bitwriter.rs     LSB-first bit writer
-    tables.rs        insert/copy length codes + command mapping
-  gzip/
-    mod.rs           assembles the gzip stream
-    bitwriter.rs     LSB-first bit/Huffman-code writer
-    huffman.rs       Huffman code construction + code-length RLE
-    crc.rs           CRC-32 via CRC combination
-```
-
-## A note on ratios
-
-`gzip` (DEFLATE) has a hard ceiling near **1032:1**, because each back-reference
-copies at most 258 bytes. So ~1 MiB of a single byte is about the smallest input
-that still produces a roughly 1 KB `.gz` — go much smaller and the gzip file
-shrinks below a kilobyte; go larger and it grows linearly (~1 KB per MiB).
-
-`brotli` can copy up to ~16 MiB in a single command (against gzip's 258 bytes),
-so one meta-block turns 16 MiB of output into about 13 bytes — a ratio over a
-million to one — and it holds that as the output grows.
-
-Note that gzip stores the original size in only 32 bits, so for outputs above
-4 GiB `gunzip -l` reports the size modulo 2³². The data still decompresses
-correctly; `gunzip -c file.gz | wc -c` gives the true size.
+<p align="center"><sub>Part of <a href="https://daleobrien.github.io/#utils">Utils</a> &nbsp;·&nbsp; more at <a href="https://daleobrien.github.io">daleobrien.github.io</a></sub></p>
