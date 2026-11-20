@@ -1,6 +1,6 @@
 //! Command-line interface (clap) and value parsers.
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
 /// Write tiny gzip and brotli files that expand to one repeated byte.
 #[derive(Parser, Debug)]
@@ -20,9 +20,36 @@ pub struct Cli {
     #[arg(short, long, default_value = "1m", value_parser = parse_size)]
     pub size: u64,
 
-    /// Output prefix; writes <PREFIX>.gz and <PREFIX>.br
+    /// Output prefix; writes <PREFIX>.gz and/or <PREFIX>.br
     #[arg(short, long, value_name = "PREFIX", default_value = "repeat")]
     pub out: String,
+
+    /// Which file(s) to write
+    #[arg(short, long, value_enum, default_value_t = Format::Both)]
+    pub format: Format,
+}
+
+/// Which compressed file(s) `fluff` should write.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum Format {
+    /// Write both the gzip and brotli files.
+    Both,
+    /// Write only the gzip `.gz` file.
+    Gz,
+    /// Write only the brotli `.br` file.
+    Br,
+}
+
+impl Format {
+    /// Whether the gzip `.gz` file should be written.
+    pub fn gzip(self) -> bool {
+        matches!(self, Format::Both | Format::Gz)
+    }
+
+    /// Whether the brotli `.br` file should be written.
+    pub fn brotli(self) -> bool {
+        matches!(self, Format::Both | Format::Br)
+    }
 }
 
 /// Accept exactly one ASCII character and return its byte value.
@@ -115,6 +142,21 @@ mod tests {
             (cli.byte, cli.size, cli.out.as_str()),
             (b'z', 8 << 10, "big")
         );
+    }
+
+    #[test]
+    fn format_selects_outputs() {
+        let cli = Cli::try_parse_from(["fluff"]).unwrap();
+        assert_eq!(cli.format, Format::Both);
+        assert!(cli.format.gzip() && cli.format.brotli());
+
+        let cli = Cli::try_parse_from(["fluff", "--format", "br"]).unwrap();
+        assert!(cli.format.brotli() && !cli.format.gzip());
+
+        let cli = Cli::try_parse_from(["fluff", "-f", "gz"]).unwrap();
+        assert!(cli.format.gzip() && !cli.format.brotli());
+
+        assert!(Cli::try_parse_from(["fluff", "-f", "zip"]).is_err());
     }
 
     #[test]

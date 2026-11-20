@@ -31,19 +31,21 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: &Cli) -> std::io::Result<()> {
-    let gz_path = format!("{}.gz", cli.out);
-    let br_path = format!("{}.br", cli.out);
-
-    let gz_size = gzip::write_file(&gz_path, cli.byte, cli.size)?;
-    let br_size = brotli::write_file(&br_path, cli.byte, cli.size)?;
-
     println!(
         "{} bytes ({}) of {:?} repeated:",
         cli.size,
         human_bytes(cli.size),
         char::from(cli.byte),
     );
-    report(&gz_path, cli.size, gz_size);
-    report(&br_path, cli.size, br_size);
+    if cli.format.gzip() {
+        let gz_path = format!("{}.gz", cli.out);
+        let gz_size = gzip::write_file(&gz_path, cli.byte, cli.size)?;
+        report(&gz_path, cli.size, gz_size);
+    }
+    if cli.format.brotli() {
+        let br_path = format!("{}.br", cli.out);
+        let br_size = brotli::write_file(&br_path, cli.byte, cli.size)?;
+        report(&br_path, cli.size, br_size);
+    }
     Ok(())
 }
